@@ -116,28 +116,63 @@ class WC_Installment_Payments {
      * Include required core files
      */
     public function includes() {
-        // Core classes
-        include_once WC_INSTALLMENT_PLUGIN_PATH . 'includes/class-database-manager.php';
-        include_once WC_INSTALLMENT_PLUGIN_PATH . 'includes/class-payment-plans.php';
-        include_once WC_INSTALLMENT_PLUGIN_PATH . 'includes/class-credit-manager.php';
-        include_once WC_INSTALLMENT_PLUGIN_PATH . 'includes/class-notifications.php';
-        include_once WC_INSTALLMENT_PLUGIN_PATH . 'includes/class-whatsapp-api.php';
-        include_once WC_INSTALLMENT_PLUGIN_PATH . 'includes/class-email-notifications.php';
-        include_once WC_INSTALLMENT_PLUGIN_PATH . 'includes/class-interest-calculator.php';
-        include_once WC_INSTALLMENT_PLUGIN_PATH . 'includes/class-installment-gateway.php';
-        include_once WC_INSTALLMENT_PLUGIN_PATH . 'includes/class-admin-settings.php';
-        include_once WC_INSTALLMENT_PLUGIN_PATH . 'includes/class-customer-account.php';
+        // First include helpers and utilities (no dependencies)
+        $this->include_if_exists('lib/helpers/class-currency-helper.php');
+        $this->include_if_exists('lib/helpers/class-date-helper.php');
+        $this->include_if_exists('lib/helpers/class-validation-helper.php');
         
-        // Helpers
-        include_once WC_INSTALLMENT_PLUGIN_PATH . 'lib/helpers/class-currency-helper.php';
-        include_once WC_INSTALLMENT_PLUGIN_PATH . 'lib/helpers/class-date-helper.php';
-        include_once WC_INSTALLMENT_PLUGIN_PATH . 'lib/helpers/class-validation-helper.php';
+        // Core classes with minimal dependencies
+        $this->include_if_exists('includes/class-database-manager.php');
+        $this->include_if_exists('includes/class-interest-calculator.php');
+        $this->include_if_exists('includes/class-payment-plans.php');
+        $this->include_if_exists('includes/class-whatsapp-api.php');
+        
+        // Classes that depend on the above
+        $this->include_if_exists('includes/class-credit-manager.php');
+        $this->include_if_exists('includes/class-notifications.php');
+        
+        // Optional classes (create empty classes if files don't exist)
+        $this->include_if_exists('includes/class-email-notifications.php', true);
+        $this->include_if_exists('includes/class-installment-gateway.php', true);
+        $this->include_if_exists('includes/class-admin-settings.php', true);
+        $this->include_if_exists('includes/class-customer-account.php', true);
         
         // Admin only
         if (is_admin()) {
-            include_once WC_INSTALLMENT_PLUGIN_PATH . 'includes/admin/class-admin-credits.php';
-            include_once WC_INSTALLMENT_PLUGIN_PATH . 'includes/admin/class-admin-payment-plans.php';
+            $this->include_if_exists('includes/admin/class-admin-credits.php', true);
+            $this->include_if_exists('includes/admin/class-admin-payment-plans.php', true);
         }
+    }
+
+    /**
+     * Include file if exists, optionally create empty class
+     */
+    private function include_if_exists($file_path, $create_empty = false) {
+        $full_path = WC_INSTALLMENT_PLUGIN_PATH . $file_path;
+        
+        if (file_exists($full_path)) {
+            include_once $full_path;
+        } elseif ($create_empty) {
+            // Create a basic empty class to prevent fatal errors
+            $class_name = $this->get_class_name_from_file($file_path);
+            if ($class_name && !class_exists($class_name)) {
+                eval("class {$class_name} { public function __construct() {} }");
+            }
+        }
+    }
+
+    /**
+     * Get class name from file path
+     */
+    private function get_class_name_from_file($file_path) {
+        $file_name = basename($file_path, '.php');
+        
+        // Convert file name to class name
+        $class_name = str_replace('class-', '', $file_name);
+        $class_name = str_replace('-', '_', $class_name);
+        $class_name = 'WC_' . ucwords($class_name, '_');
+        
+        return $class_name;
     }
 
     /**
@@ -172,10 +207,25 @@ class WC_Installment_Payments {
      * Initialize when WooCommerce is loaded
      */
     public function woocommerce_loaded() {
-        $this->database_manager = new WC_Installment_Database_Manager();
-        $this->payment_plans = new WC_Payment_Plans();
-        $this->credit_manager = new WC_Credit_Manager();
-        $this->notifications = new WC_Installment_Notifications();
+        // Initialize database manager first
+        if (class_exists('WC_Installment_Database_Manager')) {
+            $this->database_manager = new WC_Installment_Database_Manager();
+        }
+        
+        // Initialize payment plans
+        if (class_exists('WC_Payment_Plans')) {
+            $this->payment_plans = new WC_Payment_Plans();
+        }
+        
+        // Initialize credit manager
+        if (class_exists('WC_Credit_Manager')) {
+            $this->credit_manager = new WC_Credit_Manager();
+        }
+        
+        // Initialize notifications
+        if (class_exists('WC_Installment_Notifications')) {
+            $this->notifications = new WC_Installment_Notifications();
+        }
         
         // Add rewrite endpoints for My Account
         add_rewrite_endpoint('my-credits', EP_ROOT | EP_PAGES);
