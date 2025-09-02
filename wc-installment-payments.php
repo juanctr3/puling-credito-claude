@@ -1,45 +1,4 @@
-/**
-     * Create default payment plans
-     */
-    private function create_default_payment_plans() {
-        // Only create if payment plans class exists
-        if (!class_exists('WC_Payment_Plans')) {
-            return;
-        }
-
-        try {
-            $payment_plans = new WC_Payment_Plans();
-            
-            $default_plans = array(
-                array(
-                    'name' => '3 Cuotas sin interés',
-                    'installments_count' => 3,
-                    'interest_rate' => 0.00,
-                    'min_amount' => 50000,
-                    'max_amount' => 500000,
-                    'active' => 1
-                ),
-                array(
-                    'name' => '6 Cuotas - 5% anual',
-                    'installments_count' => 6,
-                    'interest_rate' => 5.00,
-                    'min_amount' => 100000,
-                    'max_amount' => 1000000,
-                    'active' => 1
-                ),
-                array(
-                    'name' => '12 Cuotas - 8% anual',
-                    'installments_count' => 12,
-                    'interest_rate' => 8.00,
-                    'min_amount' => 200000,
-                    'max_amount' => 2000000,
-                    'active' => 1
-                )
-            );
-
-            foreach ($default_plans as $plan) {
-                $result = $payment_plans->create_plan($plan);
-                if (is<?php
+<?php
 /**
  * Plugin Name: WooCommerce Installment Payments
  * Plugin URI: https://example.com/wc-installment-payments
@@ -64,6 +23,20 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
+// Check if WooCommerce is active
+if (!in_array('woocommerce/woocommerce.php', apply_filters('active_plugins', get_option('active_plugins')))) {
+    add_action('admin_notices', 'wc_installment_payments_woocommerce_missing_notice');
+    return;
+}
+
+function wc_installment_payments_woocommerce_missing_notice() {
+    ?>
+    <div class="notice notice-error">
+        <p><?php _e('WooCommerce Installment Payments requiere que WooCommerce esté activo.', 'wc-installment-payments'); ?></p>
+    </div>
+    <?php
+}
+
 // Define plugin constants
 define('WC_INSTALLMENT_VERSION', '1.0.0');
 define('WC_INSTALLMENT_PLUGIN_FILE', __FILE__);
@@ -75,7 +48,7 @@ define('WC_INSTALLMENT_PLUGIN_DIR', dirname(__FILE__));
 /**
  * Main WC Installment Payments Class
  */
-class WC_Installment_Payments {
+final class WC_Installment_Payments {
 
     /**
      * Plugin instance
@@ -117,23 +90,135 @@ class WC_Installment_Payments {
      */
     public function __construct() {
         $this->init_hooks();
-        $this->includes();
-        $this->init();
+    }
+
+    /**
+     * Prevent cloning
+     */
+    public function __clone() {
+        _doing_it_wrong(__FUNCTION__, __('Nope'), '1.0.0');
+    }
+
+    /**
+     * Prevent unserializing
+     */
+    public function __wakeup() {
+        _doing_it_wrong(__FUNCTION__, __('Nope'), '1.0.0');
     }
 
     /**
      * Hook into actions and filters
      */
     private function init_hooks() {
-        add_action('init', array($this, 'init'), 0);
-        add_action('plugins_loaded', array($this, 'plugins_loaded'));
+        add_action('plugins_loaded', array($this, 'init'), 10);
+        add_action('init', array($this, 'init_endpoints'));
+        
+        // Activation and deactivation hooks
+        register_activation_hook(__FILE__, array($this, 'activate'));
+        register_deactivation_hook(__FILE__, array($this, 'deactivate'));
+    }
+
+    /**
+     * Initialize the plugin
+     */
+    public function init() {
+        // Check if WooCommerce is loaded
+        if (!class_exists('WooCommerce')) {
+            add_action('admin_notices', array($this, 'woocommerce_missing_notice'));
+            return;
+        }
+
+        // Load plugin textdomain
+        $this->load_plugin_textdomain();
+
+        // Include required files
+        $this->includes();
+
+        // Initialize components
+        $this->init_components();
+
+        // Hook into WordPress and WooCommerce
+        $this->init_wordpress_hooks();
+        $this->init_woocommerce_hooks();
+
+        // Trigger init action
+        do_action('wc_installment_payments_loaded');
+    }
+
+    /**
+     * Include required files
+     */
+    private function includes() {
+        $includes = array(
+            'includes/class-database-manager.php',
+            'includes/class-payment-plans.php',
+            'includes/class-interest-calculator.php',
+            'includes/class-whatsapp-api.php',
+            'includes/class-email-notifications.php',
+            'includes/class-credit-manager.php',
+            'includes/class-notifications.php'
+        );
+
+        foreach ($includes as $file) {
+            $file_path = WC_INSTALLMENT_PLUGIN_PATH . $file;
+            if (file_exists($file_path)) {
+                include_once $file_path;
+            }
+        }
+    }
+
+    /**
+     * Initialize components
+     */
+    private function init_components() {
+        try {
+            // Initialize database manager first
+            if (class_exists('WC_Installment_Database_Manager')) {
+                $this->database_manager = new WC_Installment_Database_Manager();
+            }
+            
+            // Initialize payment plans
+            if (class_exists('WC_Payment_Plans')) {
+                $this->payment_plans = new WC_Payment_Plans();
+            }
+            
+            // Initialize credit manager
+            if (class_exists('WC_Credit_Manager')) {
+                $this->credit_manager = new WC_Credit_Manager();
+            }
+            
+            // Initialize notifications
+            if (class_exists('WC_Installment_Notifications')) {
+                $this->notifications = new WC_Installment_Notifications();
+            }
+        } catch (Exception $e) {
+            error_log('WC Installment Payments - Error initializing components: ' . $e->getMessage());
+            add_action('admin_notices', array($this, 'initialization_error_notice'));
+        }
+    }
+
+    /**
+     * Initialize WordPress hooks
+     */
+    private function init_wordpress_hooks() {
+        // Frontend scripts and styles
         add_action('wp_enqueue_scripts', array($this, 'enqueue_frontend_scripts'));
+        
+        // Admin scripts and styles
         add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_scripts'));
         
-        // WooCommerce hooks
-        add_action('woocommerce_loaded', array($this, 'woocommerce_loaded'));
-        add_filter('woocommerce_payment_gateways', array($this, 'add_gateway_class'));
+        // Admin menu
+        add_action('admin_menu', array($this, 'admin_menu'));
         
+        // AJAX hooks
+        add_action('wp_ajax_calculate_installments', array($this, 'ajax_calculate_installments'));
+        add_action('wp_ajax_nopriv_calculate_installments', array($this, 'ajax_calculate_installments'));
+    }
+
+    /**
+     * Initialize WooCommerce hooks
+     */
+    private function init_woocommerce_hooks() {
         // Product page hooks
         add_action('woocommerce_single_product_summary', array($this, 'display_payment_plans'), 25);
         
@@ -141,144 +226,28 @@ class WC_Installment_Payments {
         add_filter('woocommerce_account_menu_items', array($this, 'add_my_account_menu_items'));
         add_action('woocommerce_account_my-credits_endpoint', array($this, 'my_credits_endpoint'));
         
-        // Admin hooks
-        add_action('admin_menu', array($this, 'admin_menu'));
-        
-        // AJAX hooks
-        add_action('wp_ajax_calculate_installments', array($this, 'ajax_calculate_installments'));
-        add_action('wp_ajax_nopriv_calculate_installments', array($this, 'ajax_calculate_installments'));
-        
-        // Activation and deactivation
-        register_activation_hook(__FILE__, array($this, 'activate'));
-        register_deactivation_hook(__FILE__, array($this, 'deactivate'));
+        // Payment gateway
+        add_filter('woocommerce_payment_gateways', array($this, 'add_gateway_class'));
     }
 
     /**
-     * Include required core files
+     * Initialize endpoints
      */
-    public function includes() {
-        // First include helpers and utilities (no dependencies)
-        $this->include_if_exists('lib/helpers/class-currency-helper.php');
-        $this->include_if_exists('lib/helpers/class-date-helper.php');
-        $this->include_if_exists('lib/helpers/class-validation-helper.php');
-        
-        // Core classes with minimal dependencies
-        $this->include_if_exists('includes/class-database-manager.php');
-        $this->include_if_exists('includes/class-interest-calculator.php');
-        $this->include_if_exists('includes/class-payment-plans.php');
-        $this->include_if_exists('includes/class-whatsapp-api.php');
-        
-        // Classes that depend on the above
-        $this->include_if_exists('includes/class-credit-manager.php');
-        $this->include_if_exists('includes/class-notifications.php');
-        
-        // Optional classes (create empty classes if files don't exist)
-        $this->include_if_exists('includes/class-email-notifications.php', true);
-        $this->include_if_exists('includes/class-installment-gateway.php', true);
-        $this->include_if_exists('includes/class-admin-settings.php', true);
-        $this->include_if_exists('includes/class-customer-account.php', true);
-        
-        // Admin only
-        if (is_admin()) {
-            $this->include_if_exists('includes/admin/class-admin-credits.php', true);
-            $this->include_if_exists('includes/admin/class-admin-payment-plans.php', true);
-        }
-    }
-
-    /**
-     * Include file if exists, optionally create empty class
-     */
-    private function include_if_exists($file_path, $create_empty = false) {
-        $full_path = WC_INSTALLMENT_PLUGIN_PATH . $file_path;
-        
-        if (file_exists($full_path)) {
-            include_once $full_path;
-        } elseif ($create_empty) {
-            // Create a basic empty class to prevent fatal errors
-            $class_name = $this->get_class_name_from_file($file_path);
-            if ($class_name && !class_exists($class_name)) {
-                eval("class {$class_name} { public function __construct() {} }");
-            }
-        }
-    }
-
-    /**
-     * Get class name from file path
-     */
-    private function get_class_name_from_file($file_path) {
-        $file_name = basename($file_path, '.php');
-        
-        // Convert file name to class name
-        $class_name = str_replace('class-', '', $file_name);
-        $class_name = str_replace('-', '_', $class_name);
-        $class_name = 'WC_' . ucwords($class_name, '_');
-        
-        return $class_name;
-    }
-
-    /**
-     * Init when WordPress initialises
-     */
-    public function init() {
-        // Before init action
-        do_action('before_wc_installment_init');
-
-        // Set up localisation
-        $this->load_plugin_textdomain();
-
-        // Init action
-        do_action('wc_installment_init');
-    }
-
-    /**
-     * When WP has loaded all plugins, trigger the `wc_installment_loaded` hook
-     */
-    public function plugins_loaded() {
-        do_action('wc_installment_loaded');
-    }
-
-    /**
-     * Load Localisation files
-     */
-    public function load_plugin_textdomain() {
-        load_plugin_textdomain('wc-installment-payments', false, dirname(plugin_basename(__FILE__)) . '/languages/');
-    }
-
-    /**
-     * Initialize when WooCommerce is loaded
-     */
-    public function woocommerce_loaded() {
-        // Initialize database manager first
-        if (class_exists('WC_Installment_Database_Manager')) {
-            $this->database_manager = new WC_Installment_Database_Manager();
-        }
-        
-        // Initialize payment plans
-        if (class_exists('WC_Payment_Plans')) {
-            $this->payment_plans = new WC_Payment_Plans();
-        }
-        
-        // Initialize credit manager
-        if (class_exists('WC_Credit_Manager')) {
-            $this->credit_manager = new WC_Credit_Manager();
-        }
-        
-        // Initialize notifications
-        if (class_exists('WC_Installment_Notifications')) {
-            $this->notifications = new WC_Installment_Notifications();
-        }
-        
+    public function init_endpoints() {
         // Add rewrite endpoints for My Account
         add_rewrite_endpoint('my-credits', EP_ROOT | EP_PAGES);
         add_rewrite_endpoint('credit-details', EP_ROOT | EP_PAGES);
     }
 
     /**
-     * Add payment gateway to WooCommerce
+     * Load plugin textdomain
      */
-    public function add_gateway_class($gateways) {
-        $gateways[] = 'WC_Installment_Gateway';
-        return $gateways;
+    public function load_plugin_textdomain() {
+        load_plugin_textdomain(
+            'wc-installment-payments',
+            false,
+            dirname(plugin_basename(__FILE__)) . '/languages/'
+        );
     }
 
     /**
@@ -287,45 +256,36 @@ class WC_Installment_Payments {
     public function display_payment_plans() {
         global $product;
         
-        if (!$product) {
-            return;
-        }
-
-        // Check if payment plans class exists and is initialized
-        if (!class_exists('WC_Payment_Plans')) {
+        if (!$product || !$this->payment_plans) {
             return;
         }
 
         try {
-            $payment_plans = new WC_Payment_Plans();
-            $plans = $payment_plans->get_available_plans_for_product($product->get_id());
+            $plans = $this->payment_plans->get_available_plans_for_product($product->get_id());
             
             if (empty($plans)) {
                 return;
             }
 
-            // Check if template file exists
             $template_file = WC_INSTALLMENT_PLUGIN_PATH . 'templates/frontend/product-payment-plans.php';
-            if (!file_exists($template_file)) {
-                return;
+            if (file_exists($template_file)) {
+                wc_get_template(
+                    'frontend/product-payment-plans.php',
+                    array(
+                        'plans' => $plans,
+                        'product' => $product
+                    ),
+                    'wc-installment-payments/',
+                    WC_INSTALLMENT_PLUGIN_PATH . 'templates/'
+                );
             }
-
-            wc_get_template(
-                'frontend/product-payment-plans.php',
-                array(
-                    'plans' => $plans,
-                    'product' => $product
-                ),
-                'wc-installment-payments/',
-                WC_INSTALLMENT_PLUGIN_PATH . 'templates/'
-            );
         } catch (Exception $e) {
-            error_log('Error in display_payment_plans: ' . $e->getMessage());
+            error_log('Error displaying payment plans: ' . $e->getMessage());
         }
     }
 
     /**
-     * Add menu items to My Account
+     * Add My Account menu items
      */
     public function add_my_account_menu_items($items) {
         $logout = $items['customer-logout'];
@@ -341,16 +301,24 @@ class WC_Installment_Payments {
      * My Credits endpoint content
      */
     public function my_credits_endpoint() {
-        wc_get_template(
-            'account/my-credits.php',
-            array(),
-            'wc-installment-payments/',
-            WC_INSTALLMENT_PLUGIN_PATH . 'templates/'
-        );
+        $template_file = WC_INSTALLMENT_PLUGIN_PATH . 'templates/account/my-credits.php';
+        if (file_exists($template_file)) {
+            include $template_file;
+        }
     }
 
     /**
-     * Add admin menu
+     * Add payment gateway
+     */
+    public function add_gateway_class($gateways) {
+        if (class_exists('WC_Installment_Gateway')) {
+            $gateways[] = 'WC_Installment_Gateway';
+        }
+        return $gateways;
+    }
+
+    /**
+     * Admin menu
      */
     public function admin_menu() {
         add_menu_page(
@@ -392,31 +360,85 @@ class WC_Installment_Payments {
     }
 
     /**
-     * Main admin page
+     * Admin pages
      */
     public function admin_page() {
-        include WC_INSTALLMENT_PLUGIN_PATH . 'templates/admin/dashboard.php';
+        echo '<div class="wrap">';
+        echo '<h1>' . __('Pagos a Plazos - Dashboard', 'wc-installment-payments') . '</h1>';
+        echo '<p>' . __('Panel de administración de pagos a plazos', 'wc-installment-payments') . '</p>';
+        echo '</div>';
     }
 
-    /**
-     * Admin settings page
-     */
     public function admin_settings_page() {
-        include WC_INSTALLMENT_PLUGIN_PATH . 'templates/admin/settings-page.php';
+        echo '<div class="wrap">';
+        echo '<h1>' . __('Configuración - Pagos a Plazos', 'wc-installment-payments') . '</h1>';
+        echo '<p>' . __('Configuración del sistema de pagos a plazos', 'wc-installment-payments') . '</p>';
+        echo '</div>';
     }
 
-    /**
-     * Admin plans page
-     */
     public function admin_plans_page() {
-        include WC_INSTALLMENT_PLUGIN_PATH . 'templates/admin/payment-plans-config.php';
+        echo '<div class="wrap">';
+        echo '<h1>' . __('Planes de Pago', 'wc-installment-payments') . '</h1>';
+        echo '<p>' . __('Administración de planes de financiamiento', 'wc-installment-payments') . '</p>';
+        echo '</div>';
+    }
+
+    public function admin_credits_page() {
+        echo '<div class="wrap">';
+        echo '<h1>' . __('Créditos', 'wc-installment-payments') . '</h1>';
+        echo '<p>' . __('Administración de créditos otorgados', 'wc-installment-payments') . '</p>';
+        echo '</div>';
     }
 
     /**
-     * Admin credits page
+     * Enqueue frontend scripts
      */
-    public function admin_credits_page() {
-        include WC_INSTALLMENT_PLUGIN_PATH . 'templates/admin/credits-list.php';
+    public function enqueue_frontend_scripts() {
+        $css_file = WC_INSTALLMENT_PLUGIN_URL . 'assets/css/frontend.css';
+        $js_file = WC_INSTALLMENT_PLUGIN_URL . 'assets/js/frontend.js';
+        
+        if (file_exists(WC_INSTALLMENT_PLUGIN_PATH . 'assets/css/frontend.css')) {
+            wp_enqueue_style('wc-installment-frontend', $css_file, array(), WC_INSTALLMENT_VERSION);
+        }
+
+        if (file_exists(WC_INSTALLMENT_PLUGIN_PATH . 'assets/js/frontend.js')) {
+            wp_enqueue_script('wc-installment-frontend', $js_file, array('jquery'), WC_INSTALLMENT_VERSION, true);
+            
+            wp_localize_script('wc-installment-frontend', 'wc_installment_ajax', array(
+                'ajax_url' => admin_url('admin-ajax.php'),
+                'nonce' => wp_create_nonce('wc_installment_nonce'),
+                'currency_symbol' => get_woocommerce_currency_symbol(),
+                'currency_position' => get_option('woocommerce_currency_pos'),
+                'thousand_separator' => wc_get_price_thousand_separator(),
+                'decimal_separator' => wc_get_price_decimal_separator(),
+                'decimals' => wc_get_price_decimals()
+            ));
+        }
+    }
+
+    /**
+     * Enqueue admin scripts
+     */
+    public function enqueue_admin_scripts($hook) {
+        if (strpos($hook, 'wc-installment') === false) {
+            return;
+        }
+
+        $css_file = WC_INSTALLMENT_PLUGIN_URL . 'assets/css/admin.css';
+        $js_file = WC_INSTALLMENT_PLUGIN_URL . 'assets/js/admin.js';
+        
+        if (file_exists(WC_INSTALLMENT_PLUGIN_PATH . 'assets/css/admin.css')) {
+            wp_enqueue_style('wc-installment-admin', $css_file, array(), WC_INSTALLMENT_VERSION);
+        }
+
+        if (file_exists(WC_INSTALLMENT_PLUGIN_PATH . 'assets/js/admin.js')) {
+            wp_enqueue_script('wc-installment-admin', $js_file, array('jquery'), WC_INSTALLMENT_VERSION, true);
+            
+            wp_localize_script('wc-installment-admin', 'wc_installment_admin', array(
+                'ajax_url' => admin_url('admin-ajax.php'),
+                'nonce' => wp_create_nonce('wc_installment_admin_nonce')
+            ));
+        }
     }
 
     /**
@@ -425,64 +447,35 @@ class WC_Installment_Payments {
     public function ajax_calculate_installments() {
         check_ajax_referer('wc_installment_nonce', 'nonce');
 
-        $product_id = intval($_POST['product_id']);
-        $plan_id = intval($_POST['plan_id']);
-        $amount = floatval($_POST['amount']);
+        $amount = floatval($_POST['amount'] ?? 0);
+        $plan_id = intval($_POST['plan_id'] ?? 0);
 
-        $calculator = new WC_Interest_Calculator();
-        $installments = $calculator->calculate_installments($amount, $plan_id);
-
-        wp_send_json_success($installments);
-    }
-
-    /**
-     * Enqueue frontend scripts and styles
-     */
-    public function enqueue_frontend_scripts() {
-        wp_enqueue_style('wc-installment-frontend', WC_INSTALLMENT_PLUGIN_URL . 'assets/css/frontend.css', array(), WC_INSTALLMENT_VERSION);
-        wp_enqueue_style('wc-installment-responsive', WC_INSTALLMENT_PLUGIN_URL . 'assets/css/responsive.css', array(), WC_INSTALLMENT_VERSION);
-
-        wp_enqueue_script('wc-installment-frontend', WC_INSTALLMENT_PLUGIN_URL . 'assets/js/frontend.js', array('jquery'), WC_INSTALLMENT_VERSION, true);
-        wp_enqueue_script('wc-installment-calculator', WC_INSTALLMENT_PLUGIN_URL . 'assets/js/payment-calculator.js', array('jquery'), WC_INSTALLMENT_VERSION, true);
-
-        wp_localize_script('wc-installment-frontend', 'wc_installment_ajax', array(
-            'ajax_url' => admin_url('admin-ajax.php'),
-            'nonce' => wp_create_nonce('wc_installment_nonce'),
-            'currency_symbol' => get_woocommerce_currency_symbol(),
-            'currency_position' => get_option('woocommerce_currency_pos'),
-            'thousand_separator' => wc_get_price_thousand_separator(),
-            'decimal_separator' => wc_get_price_decimal_separator(),
-            'decimals' => wc_get_price_decimals()
-        ));
-    }
-
-    /**
-     * Enqueue admin scripts and styles
-     */
-    public function enqueue_admin_scripts($hook) {
-        if (strpos($hook, 'wc-installment') === false) {
-            return;
+        if (!$amount || !$plan_id) {
+            wp_send_json_error(__('Datos inválidos', 'wc-installment-payments'));
         }
 
-        wp_enqueue_style('wc-installment-admin', WC_INSTALLMENT_PLUGIN_URL . 'assets/css/admin.css', array(), WC_INSTALLMENT_VERSION);
-        wp_enqueue_script('wc-installment-admin', WC_INSTALLMENT_PLUGIN_URL . 'assets/js/admin.js', array('jquery'), WC_INSTALLMENT_VERSION, true);
+        try {
+            if (class_exists('WC_Interest_Calculator')) {
+                $calculator = new WC_Interest_Calculator();
+                $result = $calculator->calculate_installments($amount, $plan_id);
 
-        wp_localize_script('wc-installment-admin', 'wc_installment_admin', array(
-            'ajax_url' => admin_url('admin-ajax.php'),
-            'nonce' => wp_create_nonce('wc_installment_admin_nonce')
-        ));
+                if (is_wp_error($result)) {
+                    wp_send_json_error($result->get_error_message());
+                } else {
+                    wp_send_json_success($result);
+                }
+            } else {
+                wp_send_json_error(__('Calculadora no disponible', 'wc-installment-payments'));
+            }
+        } catch (Exception $e) {
+            wp_send_json_error($e->getMessage());
+        }
     }
 
     /**
      * Plugin activation
      */
     public function activate() {
-        // Check if WooCommerce is active
-        if (!class_exists('WooCommerce')) {
-            deactivate_plugins(plugin_basename(__FILE__));
-            wp_die(__('Este plugin requiere WooCommerce para funcionar.', 'wc-installment-payments'));
-        }
-
         try {
             // Create database tables
             if (class_exists('WC_Installment_Database_Manager')) {
@@ -500,10 +493,8 @@ class WC_Installment_Payments {
             flush_rewrite_rules();
 
         } catch (Exception $e) {
-            // Log error and deactivate plugin
             error_log('WC Installment Payments activation error: ' . $e->getMessage());
-            deactivate_plugins(plugin_basename(__FILE__));
-            wp_die(__('Error al activar el plugin: ', 'wc-installment-payments') . $e->getMessage());
+            // Don't stop activation, just log the error
         }
     }
 
@@ -518,13 +509,18 @@ class WC_Installment_Payments {
      * Create default payment plans
      */
     private function create_default_payment_plans() {
-        // Only create if payment plans class exists
         if (!class_exists('WC_Payment_Plans')) {
             return;
         }
 
         try {
             $payment_plans = new WC_Payment_Plans();
+            
+            // Check if plans already exist
+            $existing_plans = $payment_plans->get_all_plans();
+            if (!empty($existing_plans)) {
+                return; // Plans already exist
+            }
             
             $default_plans = array(
                 array(
@@ -554,13 +550,10 @@ class WC_Installment_Payments {
             );
 
             foreach ($default_plans as $plan) {
-                $result = $payment_plans->create_plan($plan);
-                if (is_wp_error($result)) {
-                    error_log('Error creating default payment plan: ' . $result->get_error_message());
-                }
+                $payment_plans->create_plan($plan);
             }
         } catch (Exception $e) {
-            error_log('Error in create_default_payment_plans: ' . $e->getMessage());
+            error_log('Error creating default payment plans: ' . $e->getMessage());
         }
     }
 
@@ -570,44 +563,40 @@ class WC_Installment_Payments {
     private function set_default_options() {
         $default_options = array(
             'wc_installment_whatsapp_api_endpoint' => 'https://whatsapp.smsenlinea.com/api/send/whatsapp',
-            'wc_installment_whatsapp_api_secret' => '',
-            'wc_installment_whatsapp_account' => '',
             'wc_installment_email_notifications' => 'yes',
             'wc_installment_whatsapp_notifications' => 'yes',
-            'wc_installment_payment_reminder_days' => '7,3,1',
-            'wc_installment_overdue_reminder_days' => '1,7,15',
-            'wc_installment_currency' => get_woocommerce_currency()
+            'wc_installment_payment_reminder_days' => '7,3,1'
         );
 
         foreach ($default_options as $option => $value) {
-            add_option($option, $value);
+            if (!get_option($option)) {
+                add_option($option, $value);
+            }
         }
     }
 
     /**
-     * Get the plugin url
+     * Notice functions
      */
-    public function plugin_url() {
-        return untrailingslashit(plugins_url('/', __FILE__));
+    public function woocommerce_missing_notice() {
+        ?>
+        <div class="notice notice-error">
+            <p><?php _e('WooCommerce Installment Payments requiere que WooCommerce esté activo.', 'wc-installment-payments'); ?></p>
+        </div>
+        <?php
     }
 
-    /**
-     * Get the plugin path
-     */
-    public function plugin_path() {
-        return untrailingslashit(plugin_dir_path(__FILE__));
-    }
-
-    /**
-     * Get Ajax URL
-     */
-    public function ajax_url() {
-        return admin_url('admin-ajax.php', 'relative');
+    public function initialization_error_notice() {
+        ?>
+        <div class="notice notice-warning">
+            <p><?php _e('Hubo un error al inicializar algunos componentes de WooCommerce Installment Payments. Revisa el log de errores.', 'wc-installment-payments'); ?></p>
+        </div>
+        <?php
     }
 }
 
 /**
- * Main instance of WC_Installment_Payments
+ * Main instance
  */
 function WC_Installment_Payments() {
     return WC_Installment_Payments::instance();
@@ -615,8 +604,3 @@ function WC_Installment_Payments() {
 
 // Initialize the plugin
 WC_Installment_Payments();
-
-// Include diagnostic checker (remove in production)
-if (defined('WP_DEBUG') && WP_DEBUG) {
-    include_once __DIR__ . '/wc-installment-payments-checker.php';
-}
