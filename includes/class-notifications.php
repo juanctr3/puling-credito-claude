@@ -38,10 +38,32 @@ class WC_Installment_Notifications {
         global $wpdb;
         
         $this->notifications_table = $wpdb->prefix . 'wc_installment_notifications';
-        $this->whatsapp_api = new WC_WhatsApp_API();
-        $this->email_notifications = new WC_Email_Notifications();
+        
+        // Initialize APIs only when needed
+        $this->whatsapp_api = null;
+        $this->email_notifications = null;
         
         $this->init();
+    }
+
+    /**
+     * Get WhatsApp API instance (lazy loading)
+     */
+    private function get_whatsapp_api() {
+        if ($this->whatsapp_api === null && class_exists('WC_WhatsApp_API')) {
+            $this->whatsapp_api = new WC_WhatsApp_API();
+        }
+        return $this->whatsapp_api;
+    }
+
+    /**
+     * Get Email notifications instance (lazy loading)
+     */
+    private function get_email_notifications() {
+        if ($this->email_notifications === null && class_exists('WC_Email_Notifications')) {
+            $this->email_notifications = new WC_Email_Notifications();
+        }
+        return $this->email_notifications;
     }
 
     /**
@@ -156,8 +178,12 @@ class WC_Installment_Notifications {
         $template_data['days_overdue'] = $days_overdue;
         
         // Calculate late fee
-        $calculator = new WC_Interest_Calculator();
-        $late_fee = $calculator->calculate_late_fee($installment['amount'], $days_overdue);
+        if (class_exists('WC_Interest_Calculator')) {
+            $calculator = new WC_Interest_Calculator();
+            $late_fee = $calculator->calculate_late_fee($installment['amount'], $days_overdue);
+        } else {
+            $late_fee = 0; // Default value if calculator is not available
+        }
         $template_data['late_fee'] = $late_fee;
         $template_data['formatted_late_fee'] = wc_price($late_fee);
         $template_data['total_due'] = $installment['amount'] + $late_fee;
@@ -237,7 +263,8 @@ class WC_Installment_Notifications {
      * Send WhatsApp notification
      */
     private function send_whatsapp_notification($credit, $template_type, $template_data, $installment_id = null) {
-        if (!$this->whatsapp_api->is_configured()) {
+        $whatsapp_api = $this->get_whatsapp_api();
+        if (!$whatsapp_api || !$whatsapp_api->is_configured()) {
             return new WP_Error('whatsapp_not_configured', __('WhatsApp no configurado', 'wc-installment-payments'));
         }
 
@@ -264,7 +291,7 @@ class WC_Installment_Notifications {
         );
 
         // Send via WhatsApp API
-        $result = $this->whatsapp_api->send_text_message($phone, $message);
+        $result = $whatsapp_api->send_text_message($phone, $message);
 
         // Update notification status
         $this->update_notification_status($notification_id, $result);
@@ -301,12 +328,18 @@ class WC_Installment_Notifications {
         );
 
         // Send email
-        $result = $this->email_notifications->send_notification(
-            $email,
-            $subject,
-            $message,
-            $template_data
-        );
+        $email_notifications = $this->get_email_notifications();
+        if ($email_notifications) {
+            $result = $email_notifications->send_notification(
+                $email,
+                $subject,
+                $message,
+                $template_data
+            );
+        } else {
+            // Fallback to wp_mail
+            $result = wp_mail($email, $subject, $message, array('Content-Type: text/html; charset=UTF-8'));
+        }
 
         // Update notification status
         $this->update_notification_status($notification_id, $result);
@@ -632,10 +665,15 @@ class WC_Installment_Notifications {
     private function process_notification($notification) {
         switch ($notification['channel']) {
             case 'whatsapp':
-                $result = $this->whatsapp_api->send_text_message(
-                    $notification['recipient'],
-                    $notification['message']
-                );
+                $whatsapp_api = $this->get_whatsapp_api();
+                if ($whatsapp_api) {
+                    $result = $whatsapp_api->send_text_message(
+                        $notification['recipient'],
+                        $notification['message']
+                    );
+                } else {
+                    $result = new WP_Error('whatsapp_unavailable', 'WhatsApp API not available');
+                }
                 break;
                 
             case 'email':
@@ -805,7 +843,12 @@ class WC_Installment_Notifications {
             wp_die(__('Datos inválidos', 'wc-installment-payments'), '', 400);
         }
 
-        $result = $this->whatsapp_api->process_webhook($data);
+        $whatsapp_api = $this->get_whatsapp_api();
+        if ($whatsapp_api) {
+            $result = $whatsapp_api->process_webhook($data);
+        } else {
+            $result = new WP_Error('whatsapp_unavailable', 'WhatsApp API not available');
+        }
 
         if (is_wp_error($result)) {
             wp_die($result->get_error_message(), '', 400);
@@ -829,7 +872,13 @@ class WC_Installment_Notifications {
         $message = sanitize_textarea_field($_POST['message']);
 
         if ($channel === 'whatsapp') {
-            $result = $this->whatsapp_api->send_text_message($recipient, $message);
+            $whatsapp_api = $this->get_whatsapp_api();
+            if ($whatsapp_api) {
+                $result = $whatsapp_api->send_text_message($recipient, $message);
+            } else {
+                wp_send_json_error(__('WhatsApp API no disponible', 'wc-installment-payments'));
+                return;
+            }
         } elseif ($channel === 'email') {
             $result = wp_mail($recipient, __('Mensaje de Prueba', 'wc-installment-payments'), $message);
         } else {
