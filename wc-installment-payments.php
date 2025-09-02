@@ -1,4 +1,45 @@
-<?php
+/**
+     * Create default payment plans
+     */
+    private function create_default_payment_plans() {
+        // Only create if payment plans class exists
+        if (!class_exists('WC_Payment_Plans')) {
+            return;
+        }
+
+        try {
+            $payment_plans = new WC_Payment_Plans();
+            
+            $default_plans = array(
+                array(
+                    'name' => '3 Cuotas sin interés',
+                    'installments_count' => 3,
+                    'interest_rate' => 0.00,
+                    'min_amount' => 50000,
+                    'max_amount' => 500000,
+                    'active' => 1
+                ),
+                array(
+                    'name' => '6 Cuotas - 5% anual',
+                    'installments_count' => 6,
+                    'interest_rate' => 5.00,
+                    'min_amount' => 100000,
+                    'max_amount' => 1000000,
+                    'active' => 1
+                ),
+                array(
+                    'name' => '12 Cuotas - 8% anual',
+                    'installments_count' => 12,
+                    'interest_rate' => 8.00,
+                    'min_amount' => 200000,
+                    'max_amount' => 2000000,
+                    'active' => 1
+                )
+            );
+
+            foreach ($default_plans as $plan) {
+                $result = $payment_plans->create_plan($plan);
+                if (is<?php
 /**
  * Plugin Name: WooCommerce Installment Payments
  * Plugin URI: https://example.com/wc-installment-payments
@@ -246,25 +287,41 @@ class WC_Installment_Payments {
     public function display_payment_plans() {
         global $product;
         
-        if (!$product || !$this->payment_plans) {
+        if (!$product) {
             return;
         }
 
-        $plans = $this->payment_plans->get_available_plans_for_product($product->get_id());
-        
-        if (empty($plans)) {
+        // Check if payment plans class exists and is initialized
+        if (!class_exists('WC_Payment_Plans')) {
             return;
         }
 
-        wc_get_template(
-            'frontend/product-payment-plans.php',
-            array(
-                'plans' => $plans,
-                'product' => $product
-            ),
-            'wc-installment-payments/',
-            WC_INSTALLMENT_PLUGIN_PATH . 'templates/'
-        );
+        try {
+            $payment_plans = new WC_Payment_Plans();
+            $plans = $payment_plans->get_available_plans_for_product($product->get_id());
+            
+            if (empty($plans)) {
+                return;
+            }
+
+            // Check if template file exists
+            $template_file = WC_INSTALLMENT_PLUGIN_PATH . 'templates/frontend/product-payment-plans.php';
+            if (!file_exists($template_file)) {
+                return;
+            }
+
+            wc_get_template(
+                'frontend/product-payment-plans.php',
+                array(
+                    'plans' => $plans,
+                    'product' => $product
+                ),
+                'wc-installment-payments/',
+                WC_INSTALLMENT_PLUGIN_PATH . 'templates/'
+            );
+        } catch (Exception $e) {
+            error_log('Error in display_payment_plans: ' . $e->getMessage());
+        }
     }
 
     /**
@@ -426,18 +483,28 @@ class WC_Installment_Payments {
             wp_die(__('Este plugin requiere WooCommerce para funcionar.', 'wc-installment-payments'));
         }
 
-        // Create database tables
-        $this->database_manager = new WC_Installment_Database_Manager();
-        $this->database_manager->create_tables();
+        try {
+            // Create database tables
+            if (class_exists('WC_Installment_Database_Manager')) {
+                $database_manager = new WC_Installment_Database_Manager();
+                $database_manager->create_tables();
+            }
 
-        // Create default payment plans
-        $this->create_default_payment_plans();
+            // Create default payment plans
+            $this->create_default_payment_plans();
 
-        // Flush rewrite rules
-        flush_rewrite_rules();
+            // Set default options
+            $this->set_default_options();
 
-        // Set default options
-        $this->set_default_options();
+            // Flush rewrite rules
+            flush_rewrite_rules();
+
+        } catch (Exception $e) {
+            // Log error and deactivate plugin
+            error_log('WC Installment Payments activation error: ' . $e->getMessage());
+            deactivate_plugins(plugin_basename(__FILE__));
+            wp_die(__('Error al activar el plugin: ', 'wc-installment-payments') . $e->getMessage());
+        }
     }
 
     /**
@@ -451,35 +518,49 @@ class WC_Installment_Payments {
      * Create default payment plans
      */
     private function create_default_payment_plans() {
-        $default_plans = array(
-            array(
-                'name' => '3 Cuotas sin interés',
-                'installments_count' => 3,
-                'interest_rate' => 0.00,
-                'min_amount' => 50000,
-                'max_amount' => 500000,
-                'active' => 1
-            ),
-            array(
-                'name' => '6 Cuotas - 5% anual',
-                'installments_count' => 6,
-                'interest_rate' => 5.00,
-                'min_amount' => 100000,
-                'max_amount' => 1000000,
-                'active' => 1
-            ),
-            array(
-                'name' => '12 Cuotas - 8% anual',
-                'installments_count' => 12,
-                'interest_rate' => 8.00,
-                'min_amount' => 200000,
-                'max_amount' => 2000000,
-                'active' => 1
-            )
-        );
+        // Only create if payment plans class exists
+        if (!class_exists('WC_Payment_Plans')) {
+            return;
+        }
 
-        foreach ($default_plans as $plan) {
-            $this->payment_plans->create_plan($plan);
+        try {
+            $payment_plans = new WC_Payment_Plans();
+            
+            $default_plans = array(
+                array(
+                    'name' => '3 Cuotas sin interés',
+                    'installments_count' => 3,
+                    'interest_rate' => 0.00,
+                    'min_amount' => 50000,
+                    'max_amount' => 500000,
+                    'active' => 1
+                ),
+                array(
+                    'name' => '6 Cuotas - 5% anual',
+                    'installments_count' => 6,
+                    'interest_rate' => 5.00,
+                    'min_amount' => 100000,
+                    'max_amount' => 1000000,
+                    'active' => 1
+                ),
+                array(
+                    'name' => '12 Cuotas - 8% anual',
+                    'installments_count' => 12,
+                    'interest_rate' => 8.00,
+                    'min_amount' => 200000,
+                    'max_amount' => 2000000,
+                    'active' => 1
+                )
+            );
+
+            foreach ($default_plans as $plan) {
+                $result = $payment_plans->create_plan($plan);
+                if (is_wp_error($result)) {
+                    error_log('Error creating default payment plan: ' . $result->get_error_message());
+                }
+            }
+        } catch (Exception $e) {
+            error_log('Error in create_default_payment_plans: ' . $e->getMessage());
         }
     }
 
@@ -534,3 +615,8 @@ function WC_Installment_Payments() {
 
 // Initialize the plugin
 WC_Installment_Payments();
+
+// Include diagnostic checker (remove in production)
+if (defined('WP_DEBUG') && WP_DEBUG) {
+    include_once __DIR__ . '/wc-installment-payments-checker.php';
+}
