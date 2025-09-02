@@ -46,9 +46,20 @@ class WC_Credit_Manager {
         $this->installments_table = $wpdb->prefix . 'wc_installments';
         $this->history_table = $wpdb->prefix . 'wc_customer_credit_history';
         
-        $this->calculator = new WC_Interest_Calculator();
+        // Initialize calculator only when needed
+        $this->calculator = null;
         
         $this->init();
+    }
+
+    /**
+     * Get calculator instance (lazy loading)
+     */
+    private function get_calculator() {
+        if ($this->calculator === null && class_exists('WC_Interest_Calculator')) {
+            $this->calculator = new WC_Interest_Calculator();
+        }
+        return $this->calculator;
     }
 
     /**
@@ -87,8 +98,12 @@ class WC_Credit_Manager {
         }
 
         // Get payment plan
-        $payment_plans = new WC_Payment_Plans();
-        $plan = $payment_plans->get_plan($plan_id);
+        if (class_exists('WC_Payment_Plans')) {
+            $payment_plans = new WC_Payment_Plans();
+            $plan = $payment_plans->get_plan($plan_id);
+        } else {
+            return new WP_Error('class_not_found', __('Clase WC_Payment_Plans no encontrada', 'wc-installment-payments'));
+        }
         
         if (!$plan) {
             return new WP_Error('invalid_plan', __('Plan de pago no válido', 'wc-installment-payments'));
@@ -148,7 +163,12 @@ class WC_Credit_Manager {
             $credit_id = $wpdb->insert_id;
 
             // Calculate and create installments
-            $installments_calculation = $this->calculator->calculate_installments($total_amount, $plan_id);
+            $calculator = $this->get_calculator();
+            if (!$calculator) {
+                throw new Exception(__('Calculadora de intereses no disponible', 'wc-installment-payments'));
+            }
+            
+            $installments_calculation = $calculator->calculate_installments($total_amount, $plan_id);
             
             if (is_wp_error($installments_calculation)) {
                 throw new Exception($installments_calculation->get_error_message());
@@ -339,7 +359,10 @@ class WC_Credit_Manager {
         $late_fee = 0;
         if ($installment['due_date'] < current_time('Y-m-d')) {
             $days_overdue = $this->calculate_days_overdue($installment['due_date']);
-            $late_fee = $this->calculator->calculate_late_fee($installment['amount'], $days_overdue);
+            $calculator = $this->get_calculator();
+            if ($calculator) {
+                $late_fee = $calculator->calculate_late_fee($installment['amount'], $days_overdue);
+            }
         }
 
         $total_required = $installment['amount'] + $late_fee;
@@ -898,7 +921,14 @@ class WC_Credit_Manager {
         check_ajax_referer('wc_installment_nonce', 'nonce');
 
         $credit_id = intval($_POST['credit_id']);
-        $result = $this->calculator->calculate_early_payment($credit_id);
+        $calculator = $this->get_calculator();
+        
+        if (!$calculator) {
+            wp_send_json_error(__('Calculadora no disponible', 'wc-installment-payments'));
+            return;
+        }
+        
+        $result = $calculator->calculate_early_payment($credit_id);
 
         if (is_wp_error($result)) {
             wp_send_json_error($result->get_error_message());
